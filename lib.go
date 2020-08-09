@@ -14,11 +14,11 @@ type BlobFS struct {
 	storageURL string
 }
 
-func New(storageURL string) (*BlobFS, error) {
-	return &BlobFS{storageURL: storageURL}, nil
+func New(storageURL string) *BlobFS {
+	return &BlobFS{storageURL: storageURL}
 }
 
-func NewInMemory() (*BlobFS, error) {
+func NewInMemory() *BlobFS {
 	return New("mem://")
 }
 
