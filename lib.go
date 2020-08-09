@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"gocloud.dev/blob"
@@ -22,8 +22,8 @@ func NewInMemory() *BlobFS {
 	return New("mem://")
 }
 
-func (fs *BlobFS) WriteFile(ctx context.Context, path string, data []byte) error {
-	dir, filename := filepath.Split(path)
+func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) error {
+	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
 	if err != nil {
 		return err
@@ -46,8 +46,8 @@ func (fs *BlobFS) WriteFile(ctx context.Context, path string, data []byte) error
 	return nil
 }
 
-func (fs *BlobFS) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	dir, filename := filepath.Split(path)
+func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error) {
+	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
 	if err != nil {
 		return nil, err
@@ -68,8 +68,8 @@ func (fs *BlobFS) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (fs *BlobFS) Exists(ctx context.Context, path string) (bool, error) {
-	dir, filename := filepath.Split(path)
+func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
+	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
 	if err != nil {
 		return false, err
@@ -79,8 +79,8 @@ func (fs *BlobFS) Exists(ctx context.Context, path string) (bool, error) {
 	return bucket.Exists(context.TODO(), filename)
 }
 
-func (fs *BlobFS) SignedURL(ctx context.Context, path string) (string, error) {
-	dir, filename := filepath.Split(path)
+func (fs *BlobFS) SignedURL(ctx context.Context, filepath string) (string, error) {
+	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
 	if err != nil {
 		return "", err
