@@ -79,7 +79,7 @@ func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 	return bucket.Exists(context.TODO(), filename)
 }
 
-func (fs *BlobFS) SignedURL(ctx context.Context, filepath string) (string, error) {
+func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (string, error) {
 	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
 	if err != nil {
@@ -87,7 +87,7 @@ func (fs *BlobFS) SignedURL(ctx context.Context, filepath string) (string, error
 	}
 	defer bucket.Close()
 
-	return bucket.SignedURL(ctx, filename, nil)
+	return bucket.SignedURL(ctx, filename, opts)
 }
 
 func (fs *BlobFS) openBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
