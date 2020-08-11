@@ -18,7 +18,7 @@ func New(storageURL string) *BlobFS {
 	return &BlobFS{storageURL: storageURL}
 }
 
-func NewInMemory() *BlobFS {
+func NewInMemoryFS() *BlobFS {
 	return New("mem://")
 }
 
