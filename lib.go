@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gocloud.dev/blob"
+	_ "gocloud.dev/blob/fileblob"
 	_ "gocloud.dev/blob/memblob"
 )
 
