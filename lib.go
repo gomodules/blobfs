@@ -74,6 +74,17 @@ func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error)
 	return buf.Bytes(), nil
 }
 
+func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
+	dir, filename := path.Split(filepath)
+	bucket, err := fs.openBucket(ctx, dir)
+	if err != nil {
+		return err
+	}
+	defer bucket.Close()
+
+	return bucket.Delete(context.TODO(), filename)
+}
+
 func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 	dir, filename := path.Split(filepath)
 	bucket, err := fs.openBucket(ctx, dir)
