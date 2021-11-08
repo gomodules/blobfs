@@ -16,6 +16,8 @@ type BlobFS struct {
 	storageURL string
 }
 
+var _ Interface = &BlobFS{}
+
 func New(storageURL string) *BlobFS {
 	return &BlobFS{storageURL: storageURL}
 }
