@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+
 jobs:
   build:
     name: Build
@@ -17,7 +19,7 @@ jobs:
       - name: Set up Go 1.x
         uses: actions/setup-go@v2
         with:
-          go-version: ^1.19
+          go-version: ^1.20
         id: go
 
       - uses: actions/checkout@v2
