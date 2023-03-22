@@ -15,14 +15,14 @@
 // Package memblob provides an in-memory blob implementation.
 // Use OpenBucket to construct a *blob.Bucket.
 //
-// URLs
+// # URLs
 //
 // For blob.OpenBucket memblob registers for the scheme "mem".
 // To customize the URL opener, or for more details on the URL format,
 // see URLOpener.
 // See https://gocloud.dev/concepts/urls/ for background information.
 //
-// As
+// # As
 //
 // memblob does not support any types for As.
 package memblob // import "gocloud.dev/blob/memblob"
@@ -354,7 +354,9 @@ func (b *bucket) Copy(ctx context.Context, dstKey, srcKey string, opts *driver.C
 	defer b.mu.Unlock()
 
 	if opts.BeforeCopy != nil {
-		return opts.BeforeCopy(func(interface{}) bool { return false })
+		if err := opts.BeforeCopy(func(interface{}) bool { return false }); err != nil {
+			return err
+		}
 	}
 	v := b.blobs[srcKey]
 	if v == nil {
