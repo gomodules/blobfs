@@ -354,9 +354,7 @@ func (b *bucket) Copy(ctx context.Context, dstKey, srcKey string, opts *driver.C
 	defer b.mu.Unlock()
 
 	if opts.BeforeCopy != nil {
-		if err := opts.BeforeCopy(func(interface{}) bool { return false }); err != nil {
-			return err
-		}
+		return opts.BeforeCopy(func(interface{}) bool { return false })
 	}
 	v := b.blobs[srcKey]
 	if v == nil {
