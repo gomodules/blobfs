@@ -7,18 +7,15 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/ec2metadata"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sts"
+	gcaws "gocloud.dev/aws"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob"
 	_ "gocloud.dev/blob/memblob"
@@ -34,10 +31,7 @@ type BlobFS struct {
 	storageURL string
 	prefix     string
 
-	CACert      []byte
-	InsecureTLS bool
-	Endpoint    string
-	Region      string
+	CACert []byte
 }
 
 func New(storageURL string, prefix ...string) *BlobFS {
@@ -70,7 +64,9 @@ func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) e
 	}
 	defer bucket.Close()
 
-	w, err := bucket.NewWriter(ctx, filename, nil)
+	w, err := bucket.NewWriter(ctx, filename, &blob.WriterOptions{
+		DisableContentTypeDetection: true,
+	})
 	if err != nil {
 		return err
 	}
@@ -143,13 +139,42 @@ func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.Sig
 
 func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
 	var bucket *blob.Bucket
-	var err error
-	if strings.HasPrefix(fs.storageURL, "s3://") {
-		sess, err := fs.getS3Session()
+
+	u, err := url.Parse(fs.storageURL)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme == s3blob.Scheme {
+		sess, rest, err := gcaws.NewSessionFromURLParams(u.Query())
 		if err != nil {
+			return nil, fmt.Errorf("open bucket %v: %v", u, err)
+		}
+		configProvider := &gcaws.ConfigOverrider{
+			Base: sess,
+		}
+		overrideCfg, err := gcaws.ConfigFromURLParams(rest)
+		if err != nil {
+			return nil, fmt.Errorf("open bucket %v: %v", u, err)
+		}
+
+		var insecureTLS bool
+		if overrideCfg.Endpoint != nil {
+			u, err := url.Parse(*overrideCfg.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			// use InsecureSkipVerify, if IP address is used for baseURL host
+			if ip := net.ParseIP(u.Hostname()); ip != nil && u.Scheme == "https" {
+				insecureTLS = true
+			}
+		}
+		if err := configureTLS(overrideCfg, fs.CACert, insecureTLS); err != nil {
 			return nil, err
 		}
-		bucket, err = s3blob.OpenBucket(ctx, sess, fs.storageURL, nil)
+
+		configProvider.Configs = append(configProvider.Configs, overrideCfg)
+
+		bucket, err = s3blob.OpenBucket(ctx, configProvider, u.Host, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -165,35 +190,6 @@ func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, err
 		return bucket, nil
 	}
 	return blob.PrefixedBucket(bucket, prefix), nil
-}
-
-func (fs *BlobFS) getS3Session() (*session.Session, error) {
-	config := &aws.Config{
-		Region:                        aws.String(fs.Region),
-		CredentialsChainVerboseErrors: aws.Bool(true),
-		Endpoint:                      aws.String(fs.Endpoint),
-		S3ForcePathStyle:              aws.Bool(true),
-	}
-	if err := configureTLS(config, fs.CACert, fs.InsecureTLS); err != nil {
-		return nil, err
-	}
-
-	sess := session.Must(session.NewSession())
-	config.WithCredentials(credentials.NewChainCredentials([]credentials.Provider{
-		&credentials.EnvProvider{},
-		&credentials.SharedCredentialsProvider{},
-		// Required for IRSA
-		stscreds.NewWebIdentityRoleProviderWithOptions(
-			sts.New(sess),
-			os.Getenv(awsRoleArn),
-			"",
-			stscreds.FetchTokenPath(os.Getenv(awsWebIdentityTokenFile)),
-		),
-		&ec2rolecreds.EC2RoleProvider{
-			Client: ec2metadata.New(sess),
-		},
-	}))
-	return session.NewSession(config)
 }
 
 func configureTLS(config *aws.Config, caCert []byte, insecureTLS bool) error {
