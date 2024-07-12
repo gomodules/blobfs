@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/pkg/errors"
 	gcaws "gocloud.dev/aws"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob"
@@ -210,4 +211,24 @@ func configureTLS(config *aws.Config, caCert []byte, insecureTLS bool) error {
 		Transport: defaultHTTPTransport,
 	}
 	return nil
+}
+
+func CreateBucketURL(bucketURL, endpoint, region string) string {
+	u, err := url.Parse(bucketURL)
+	if err != nil {
+		panic(errors.Wrapf(err, "invalid bucket URL %s", bucketURL))
+	}
+
+	if u.Scheme == s3blob.Scheme {
+		values := u.Query()
+		values.Set("s3ForcePathStyle", "true")
+		if endpoint != "" {
+			values.Set("endpoint", endpoint)
+		}
+		if region != "" {
+			values.Set("region", region)
+		}
+		u.RawQuery = values.Encode()
+	}
+	return u.String()
 }

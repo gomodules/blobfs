@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/aws/aws-sdk-go v1.54.18
+	github.com/pkg/errors v0.9.1
 	gocloud.dev v0.37.0
 )
 
