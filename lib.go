@@ -40,7 +40,7 @@ type BlobFS struct {
 	Region      string
 }
 
-func New(storageURL string, prefix ...string) Interface {
+func New(storageURL string, prefix ...string) *BlobFS {
 	var bucketPrefix string
 	if len(prefix) > 0 {
 		bucketPrefix = prefix[0]
@@ -51,6 +51,8 @@ func New(storageURL string, prefix ...string) Interface {
 		prefix:     bucketPrefix,
 	}
 }
+
+var _ Interface = (*BlobFS)(nil)
 
 func NewInMemoryFS() Interface {
 	return New("mem://")
