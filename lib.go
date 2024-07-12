@@ -3,18 +3,41 @@ package blobfs
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"path"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob"
 	_ "gocloud.dev/blob/memblob"
+	"gocloud.dev/blob/s3blob"
+)
+
+const (
+	awsRoleArn              = "AWS_ROLE_ARN"
+	awsWebIdentityTokenFile = "AWS_WEB_IDENTITY_TOKEN_FILE"
 )
 
 type BlobFS struct {
 	storageURL string
 	prefix     string
+
+	CACert      []byte
+	InsecureTLS bool
+	Endpoint    string
+	Region      string
 }
 
 func New(storageURL string, prefix ...string) Interface {
@@ -39,7 +62,7 @@ func NewOsFs() Interface {
 
 func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) error {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.openBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
 	if err != nil {
 		return err
 	}
@@ -63,7 +86,7 @@ func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) e
 
 func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.openBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +108,7 @@ func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error)
 
 func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.openBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
 	if err != nil {
 		return err
 	}
@@ -96,7 +119,7 @@ func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
 
 func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.openBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
 	if err != nil {
 		return false, err
 	}
@@ -107,7 +130,7 @@ func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 
 func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (string, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.openBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
 	if err != nil {
 		return "", err
 	}
@@ -116,10 +139,77 @@ func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.Sig
 	return bucket.SignedURL(ctx, filename, opts)
 }
 
-func (fs *BlobFS) openBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
-	bucket, err := blob.OpenBucket(ctx, fs.storageURL)
-	if err != nil {
+func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
+	var bucket *blob.Bucket
+	var err error
+	if strings.HasPrefix(fs.storageURL, "s3://") {
+		sess, err := fs.getS3Session()
+		if err != nil {
+			return nil, err
+		}
+		bucket, err = s3blob.OpenBucket(ctx, sess, fs.storageURL, nil)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bucket, err = blob.OpenBucket(ctx, fs.storageURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	prefix := strings.Trim(dir, "/") + "/"
+	if prefix == string(os.PathSeparator) {
+		return bucket, nil
+	}
+	return blob.PrefixedBucket(bucket, prefix), nil
+}
+
+func (fs *BlobFS) getS3Session() (*session.Session, error) {
+	config := &aws.Config{
+		Region:                        aws.String(fs.Region),
+		CredentialsChainVerboseErrors: aws.Bool(true),
+		Endpoint:                      aws.String(fs.Endpoint),
+		S3ForcePathStyle:              aws.Bool(true),
+	}
+	if err := configureTLS(config, fs.CACert, fs.InsecureTLS); err != nil {
 		return nil, err
 	}
-	return blob.PrefixedBucket(bucket, strings.Trim(dir, "/")+"/"), nil
+
+	sess := session.Must(session.NewSession())
+	config.WithCredentials(credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+		// Required for IRSA
+		stscreds.NewWebIdentityRoleProviderWithOptions(
+			sts.New(sess),
+			os.Getenv(awsRoleArn),
+			"",
+			stscreds.FetchTokenPath(os.Getenv(awsWebIdentityTokenFile)),
+		),
+		&ec2rolecreds.EC2RoleProvider{
+			Client: ec2metadata.New(sess),
+		},
+	}))
+	return session.NewSession(config)
+}
+
+func configureTLS(config *aws.Config, caCert []byte, insecureTLS bool) error {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: insecureTLS,
+	}
+	if caCert != nil {
+		caCertPool := x509.NewCertPool()
+		if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
+			return fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+	defaultHTTPTransport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultHTTPTransport.TLSClientConfig = tlsConfig
+
+	config.HTTPClient = &http.Client{
+		Transport: defaultHTTPTransport,
+	}
+	return nil
 }
