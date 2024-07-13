@@ -59,7 +59,7 @@ func NewOsFs() Interface {
 
 func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) error {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) e
 
 func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error)
 
 func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
 
 func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, dir)
 	if err != nil {
 		return false, err
 	}
@@ -129,7 +129,7 @@ func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
 
 func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (string, error) {
 	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, path.Join(fs.prefix, dir))
+	bucket, err := fs.OpenBucket(ctx, dir)
 	if err != nil {
 		return "", err
 	}
@@ -186,7 +186,7 @@ func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, err
 		}
 	}
 
-	prefix := strings.Trim(dir, "/") + "/"
+	prefix := strings.Trim(path.Join(fs.prefix, dir), "/") + "/"
 	if prefix == string(os.PathSeparator) {
 		return bucket, nil
 	}
