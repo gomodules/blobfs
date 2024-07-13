@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -186,7 +187,7 @@ func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, err
 		}
 	}
 
-	prefix := strings.Trim(dir, "/") + "/"
+	prefix := strings.Trim(filepath.Join(fs.prefix, dir), "/") + "/"
 	if prefix == string(os.PathSeparator) {
 		return bucket, nil
 	}
