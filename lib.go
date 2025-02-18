@@ -221,7 +221,9 @@ func CreateBucketURL(bucketURL, endpoint, region string) string {
 
 	if u.Scheme == s3blob.Scheme {
 		values := u.Query()
-		values.Set("s3ForcePathStyle", "true")
+		// https://github.com/google/go-cloud/pull/3505
+		values.Del("s3ForcePathStyle")
+		values.Set("use_path_style", "true")
 		if endpoint != "" {
 			values.Set("endpoint", endpoint)
 		}
