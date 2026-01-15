@@ -12,4 +12,5 @@ type Interface interface {
 	DeleteFile(ctx context.Context, filepath string) error
 	Exists(ctx context.Context, filepath string) (bool, error)
 	SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (string, error)
+	OpenBucket(ctx context.Context, dir string) (*blob.Bucket, error)
 }

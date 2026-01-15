@@ -28,11 +28,57 @@ const (
 	awsWebIdentityTokenFile = "AWS_WEB_IDENTITY_TOKEN_FILE"
 )
 
-type BlobFS struct {
-	storageURL string
-	prefix     string
+type (
+	// BlobFS provides a filesystem abstraction over various blob storage backends
+	BlobFS struct {
+		storageURL  string
+		storageType string
+		prefix      string
+		hook        TelemetryHook
+		CACert      []byte
+	}
 
-	CACert []byte
+	// TelemetryHook is invoked after each filesystem operation
+	// It is intended for metrics, tracing, and observability
+	TelemetryHook func(
+		ctx context.Context,
+		op Operation,
+		dirName string,
+		fileName string,
+		storageType string,
+		err error,
+	)
+)
+
+// Operation represents a filesystem operation
+type Operation int
+
+const (
+	Write Operation = iota
+	Read
+	Delete
+	Exists
+	SignedURL
+	OpenBucket
+)
+
+func (op Operation) String() string {
+	switch op {
+	case Write:
+		return "write_file"
+	case Read:
+		return "read_file"
+	case Delete:
+		return "delete_file"
+	case Exists:
+		return "exists"
+	case SignedURL:
+		return "signed_url"
+	case OpenBucket:
+		return "open_bucket"
+	default:
+		return fmt.Sprintf("unknown_operation(%d)", int(op))
+	}
 }
 
 func New(storageURL string, prefix ...string) *BlobFS {
@@ -42,9 +88,18 @@ func New(storageURL string, prefix ...string) *BlobFS {
 	}
 
 	return &BlobFS{
-		storageURL: storageURL,
-		prefix:     bucketPrefix,
+		storageURL:  storageURL,
+		storageType: extractStorageType(storageURL),
+		hook:        nil,
+		prefix:      bucketPrefix,
 	}
+}
+
+// NOTE: Any telemetry hook must be registered right after calling New()
+// NOT safe for concurrent use
+func (b *BlobFS) WithMetricsHook(metricsHook TelemetryHook) *BlobFS {
+	b.hook = metricsHook
+	return b
 }
 
 var _ Interface = (*BlobFS)(nil)
@@ -57,15 +112,24 @@ func NewOsFs() Interface {
 	return New("file:///")
 }
 
-func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) error {
-	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, dir)
+func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) (err error) {
+	dirName, fileName := path.Split(filepath)
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, Write, dirName, fileName, fs.storageType, err)
+		}
+	}()
+	return fs.writeFile(ctx, dirName, fileName, data)
+}
+
+func (fs *BlobFS) writeFile(ctx context.Context, dirName, fileName string, data []byte) error {
+	bucket, err := fs.openBucket(ctx, dirName)
 	if err != nil {
 		return err
 	}
 	defer bucket.Close()
 
-	w, err := bucket.NewWriter(ctx, filename, &blob.WriterOptions{
+	w, err := bucket.NewWriter(ctx, fileName, &blob.WriterOptions{
 		DisableContentTypeDetection: true,
 	})
 	if err != nil {
@@ -83,15 +147,24 @@ func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) e
 	return nil
 }
 
-func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error) {
-	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, dir)
+func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) (bytes []byte, err error) {
+	dirName, fileName := path.Split(filepath)
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, Read, dirName, fileName, fs.storageType, err)
+		}
+	}()
+	return fs.readFile(ctx, dirName, fileName)
+}
+
+func (fs *BlobFS) readFile(ctx context.Context, dirName, fileName string) ([]byte, error) {
+	bucket, err := fs.openBucket(ctx, dirName)
 	if err != nil {
 		return nil, err
 	}
 	defer bucket.Close()
 	// Open the key "foo.txt" for reading with the default options.
-	r, err := bucket.NewReader(ctx, filename, nil)
+	r, err := bucket.NewReader(ctx, fileName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -105,40 +178,78 @@ func (fs *BlobFS) ReadFile(ctx context.Context, filepath string) ([]byte, error)
 	return buf.Bytes(), nil
 }
 
-func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) error {
-	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, dir)
+func (fs *BlobFS) DeleteFile(ctx context.Context, filepath string) (err error) {
+	dirName, fileName := path.Split(filepath)
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, Delete, dirName, fileName, fs.storageType, err)
+		}
+	}()
+	return fs.deleteFile(ctx, dirName, fileName)
+}
+
+func (fs *BlobFS) deleteFile(ctx context.Context, dirName, fileName string) error {
+	bucket, err := fs.openBucket(ctx, dirName)
 	if err != nil {
 		return err
 	}
 	defer bucket.Close()
 
-	return bucket.Delete(context.TODO(), filename)
+	err = bucket.Delete(context.TODO(), fileName)
+	return err
 }
 
-func (fs *BlobFS) Exists(ctx context.Context, filepath string) (bool, error) {
-	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, dir)
+func (fs *BlobFS) Exists(ctx context.Context, filepath string) (exists bool, err error) {
+	dirName, filename := path.Split(filepath)
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, Exists, dirName, filename, fs.storageType, err)
+		}
+	}()
+	return fs.exists(ctx, dirName, filename)
+}
+
+func (fs *BlobFS) exists(ctx context.Context, dirName, fileName string) (bool, error) {
+	bucket, err := fs.openBucket(ctx, dirName)
 	if err != nil {
 		return false, err
 	}
 	defer bucket.Close()
 
-	return bucket.Exists(context.TODO(), filename)
+	exists, err := bucket.Exists(context.TODO(), fileName)
+	return exists, err
 }
 
-func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (string, error) {
-	dir, filename := path.Split(filepath)
-	bucket, err := fs.OpenBucket(ctx, dir)
+func (fs *BlobFS) SignedURL(ctx context.Context, filepath string, opts *blob.SignedURLOptions) (url string, err error) {
+	dirName, fileName := path.Split(filepath)
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, SignedURL, dirName, fileName, fs.storageType, err)
+		}
+	}()
+	return fs.signedURL(ctx, dirName, fileName, opts)
+}
+
+func (fs *BlobFS) signedURL(ctx context.Context, dirName, fileName string, opts *blob.SignedURLOptions) (string, error) {
+	bucket, err := fs.openBucket(ctx, dirName)
 	if err != nil {
 		return "", err
 	}
 	defer bucket.Close()
 
-	return bucket.SignedURL(ctx, filename, opts)
+	return bucket.SignedURL(ctx, fileName, opts)
 }
 
-func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
+func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (bucket *blob.Bucket, err error) {
+	defer func() {
+		if fs.hook != nil {
+			fs.hook(ctx, OpenBucket, dir, "", fs.storageType, err)
+		}
+	}()
+	return fs.openBucket(ctx, dir)
+}
+
+func (fs *BlobFS) openBucket(ctx context.Context, dir string) (*blob.Bucket, error) {
 	var bucket *blob.Bucket
 
 	u, err := url.Parse(fs.storageURL)
@@ -191,6 +302,14 @@ func (fs *BlobFS) OpenBucket(ctx context.Context, dir string) (*blob.Bucket, err
 		return bucket, nil
 	}
 	return blob.PrefixedBucket(bucket, prefix), nil
+}
+
+func extractStorageType(storageURL string) string {
+	u, err := url.Parse(storageURL)
+	if err != nil || u.Scheme == "" {
+		return storageURL
+	}
+	return u.Scheme
 }
 
 func configureTLS(config *aws.Config, caCert []byte, insecureTLS bool) error {
