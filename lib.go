@@ -95,13 +95,6 @@ func New(storageURL string, prefix ...string) *BlobFS {
 	}
 }
 
-// NOTE: Any telemetry hook must be registered right after calling New()
-// NOT safe for concurrent use
-func (b *BlobFS) WithMetricsHook(metricsHook TelemetryHook) *BlobFS {
-	b.hook = metricsHook
-	return b
-}
-
 var _ Interface = (*BlobFS)(nil)
 
 func NewInMemoryFS() Interface {
@@ -110,6 +103,19 @@ func NewInMemoryFS() Interface {
 
 func NewOsFs() Interface {
 	return New("file:///")
+}
+
+func (fs *BlobFS) WithCACert(caCert []byte) *BlobFS {
+	fs.CACert = caCert
+	return fs
+}
+
+// WithMetricsHook adds a telemetry hook to the BlobFS instance.
+// NOTE: Any telemetry hook must be registered right after calling New()
+// NOT safe for concurrent use
+func (fs *BlobFS) WithMetricsHook(metricsHook TelemetryHook) *BlobFS {
+	fs.hook = metricsHook
+	return fs
 }
 
 func (fs *BlobFS) WriteFile(ctx context.Context, filepath string, data []byte) (err error) {
