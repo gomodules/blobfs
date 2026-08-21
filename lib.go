@@ -322,7 +322,7 @@ func configureTLS(config *aws.Config, caCert []byte, insecureTLS bool) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: insecureTLS,
 	}
-	if caCert != nil {
+	if len(caCert) > 0 {
 		caCertPool := x509.NewCertPool()
 		if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
 			return fmt.Errorf("failed to parse CA certificate")
